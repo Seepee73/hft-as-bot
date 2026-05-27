@@ -1,0 +1,23 @@
+symbol: "AAPL"
+exchange_ws_url: "wss://stream.your-exchange.com/AAPL"
+
+# AS Model
+gamma: 0.1
+session_hours: 6.5
+
+# Parameter estimation
+vol_ewma_alpha: 0.05
+kappa_window_secs: 60
+
+# OMS
+tick_size: 0.01
+quote_qty: 1
+refresh_interval_ms: 100
+
+# Risk
+max_inventory: 10
+max_daily_loss_usd: 5000.0
+
+# Monitoring
+prometheus_port: 8000
+log_level: "INFO"
