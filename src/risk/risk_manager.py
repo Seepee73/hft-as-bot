@@ -60,6 +60,9 @@ class RiskManager:
         logger.debug("Fill %s %s qty=%d @ %.4f → q=%d realised=%.2f",
                      fill.order_id, fill.side, fill.fill_qty,
                      fill.fill_price, self.q, self.realised_pnl)
+        # Re-arm flatten once inventory has come back to a safe level
+        if abs(self.q) < self.q_max // 2:
+            self._flatten_triggered = False
         self._check_inventory_limit()
 
     def check_order(self, req: OrderRequest) -> bool:

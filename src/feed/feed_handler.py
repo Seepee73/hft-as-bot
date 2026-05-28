@@ -165,3 +165,120 @@ class FeedHandler:
                     "Sequence gap on %s: expected %d, got %d",
                     self.symbol, expected, sequence,
                 )
+
+
+# ---------------------------------------------------------------------------
+# Kraken WebSocket v2 adapter
+# ---------------------------------------------------------------------------
+
+class KrakenFeedHandler(FeedHandler):
+    """
+    Kraken WebSocket v2 (wss://ws.kraken.com/v2) adapter.
+
+    Subscribes to 'book' and 'trade' channels on connect.
+    Maintains a full local book from snapshots + incremental deltas so that
+    OrderBookManager always receives complete price-level snapshots.
+    """
+
+    _DEPTH = 10
+
+    def __init__(
+        self,
+        symbol: str,
+        ws_url: str,
+        on_event: Callable[[OrderBookEvent], None],
+        buffer_capacity: int = 10_000,
+    ) -> None:
+        super().__init__(symbol, ws_url, on_event, buffer_capacity)
+        self._book_bids: dict[float, float] = {}   # price → qty
+        self._book_asks: dict[float, float] = {}
+        self._pending_trade_vol: float = 0.0
+
+    async def _message_loop(self, ws) -> None:
+        sub = {"method": "subscribe", "params": {"depth": self._DEPTH, "symbol": [self.symbol]}}
+        await ws.send(orjson.dumps({**sub, "params": {**sub["params"], "channel": "book"}}))
+        await ws.send(orjson.dumps({**sub, "params": {**sub["params"], "channel": "trade"}}))
+
+        async for raw_bytes in ws:
+            if not self._running:
+                break
+            try:
+                msg = orjson.loads(raw_bytes)
+            except orjson.JSONDecodeError as exc:
+                logger.warning("JSON decode error: %s", exc)
+                continue
+            event = self.on_message(msg)
+            if event is not None:
+                try:
+                    self.on_event(event)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("on_event callback raised: %s", exc)
+
+    def on_message(self, raw: dict) -> Optional[OrderBookEvent]:
+        channel = raw.get("channel")
+        msg_type = raw.get("type")
+
+        if channel == "trade" and msg_type == "update":
+            for trade in raw.get("data", []):
+                self._pending_trade_vol += float(trade.get("qty", 0.0))
+            return None
+
+        if channel == "book":
+            data = raw.get("data", [{}])[0]
+            if msg_type == "snapshot":
+                self._book_bids.clear()
+                self._book_asks.clear()
+            self._apply_levels(data.get("bids", []), self._book_bids)
+            self._apply_levels(data.get("asks", []), self._book_asks)
+            return self._emit_event(data)
+
+        return None  # heartbeat / subscription ack / status
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _apply_levels(levels: list, book_side: dict[float, float]) -> None:
+        for level in levels:
+            price, qty = float(level["price"]), float(level["qty"])
+            if qty == 0.0:
+                book_side.pop(price, None)
+            else:
+                book_side[price] = qty
+
+    def _emit_event(self, data: dict) -> Optional[OrderBookEvent]:
+        if not self._book_bids or not self._book_asks:
+            return None
+
+        seq = int(data.get("seq", 0))
+        self._check_gap(seq)
+        self._last_msg_time = time.time()
+        self._last_sequence = seq
+
+        trade_vol = self._pending_trade_vol
+        self._pending_trade_vol = 0.0
+
+        bids = sorted(self._book_bids.items(), key=lambda x: x[0], reverse=True)
+        asks = sorted(self._book_asks.items(), key=lambda x: x[0])
+
+        event = OrderBookEvent(
+            symbol=self.symbol,
+            timestamp=self._parse_ts(data.get("timestamp", "")),
+            bids=bids,
+            asks=asks,
+            trade_volume=trade_vol,
+            sequence=seq,
+        )
+        self.buffer.push(event)
+        return event
+
+    @staticmethod
+    def _parse_ts(ts_str: str) -> float:
+        if not ts_str:
+            return time.time()
+        try:
+            from datetime import datetime, timezone
+            return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+        except (ValueError, AttributeError):
+            return time.time()

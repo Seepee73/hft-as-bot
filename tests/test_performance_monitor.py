@@ -195,10 +195,16 @@ class TestFillRates:
 
 class TestStartServer:
     def test_start_server_calls_prometheus(self):
-        mon = _mon()
+        mon = PerformanceMonitor(prometheus_port=9999, tick_size=0.01)
         with patch("src.monitor.performance_monitor.start_http_server") as mock_srv:
             mon.start_server()
-            mock_srv.assert_called_once_with(0, registry=mon._registry)
+            mock_srv.assert_called_once_with(9999, registry=mon._registry)
+
+    def test_start_server_skipped_when_port_zero(self):
+        mon = _mon()  # port=0
+        with patch("src.monitor.performance_monitor.start_http_server") as mock_srv:
+            mon.start_server()
+            mock_srv.assert_not_called()
 
     def test_multiple_instances_no_registry_collision(self):
         """Each PerformanceMonitor must have its own registry — no duplicate metric error."""

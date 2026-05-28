@@ -4,8 +4,9 @@ import yaml
 
 
 class Config(BaseModel):
-    symbol: str = "AAPL"
-    exchange_ws_url: str = "wss://stream.your-exchange.com/AAPL"
+    symbol: str = "BTC/USD"
+    exchange: str = "generic"          # "kraken" | "generic"
+    exchange_ws_url: str = "wss://ws.kraken.com/v2"
 
     # AS Model
     gamma: float = Field(0.1, gt=0, le=2.0)
@@ -24,8 +25,12 @@ class Config(BaseModel):
     max_inventory: int = Field(10, gt=0)
     max_daily_loss_usd: float = Field(5000.0, gt=0)
 
+    # Trading mode
+    paper_trading: bool = True     # True = simulated fills, no real orders sent
+    max_spread_ticks: int = Field(0, ge=0)  # 0 = uncapped; set >0 to cap quoted half-spread
+
     # Monitoring
-    prometheus_port: int = Field(8000, ge=0, lt=65536)   # 0 = disabled (tests)
+    prometheus_port: int = Field(8001, ge=0, lt=65536)   # 0 = disabled (tests)
     log_level: str = "INFO"
 
     @field_validator("log_level")

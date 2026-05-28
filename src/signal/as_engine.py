@@ -43,10 +43,17 @@ class AvellanedaStoikovEngine:
         kappa: float,
         t_elapsed: float,
         tick_size: float = 0.01,
+        max_half_spread: float = 0.0,
     ) -> tuple[float, float]:
-        """Returns (bid_price, ask_price) rounded to tick_size."""
+        """Returns (bid_price, ask_price) rounded to tick_size.
+
+        max_half_spread: if > 0, clamps delta to this value before quoting.
+        Prevents degenerate spreads when kappa collapses to near-zero.
+        """
         r = self.reservation_price(S, q, sigma, t_elapsed)
         delta = self.optimal_spread(sigma, kappa, t_elapsed)
+        if max_half_spread > 0:
+            delta = min(delta, max_half_spread)
         bid = self._round_tick(r - delta, tick_size)
         ask = self._round_tick(r + delta, tick_size)
         # Guarantee minimum 1-tick spread after rounding

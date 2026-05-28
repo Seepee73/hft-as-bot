@@ -90,6 +90,7 @@ class SimulatedExecutionEngine(ExecutionEngine):
         self.k = k
         self._rng = rng or random.Random()
         self._orders: dict[str, _PendingOrder] = {}
+        self._side_to_order: dict[str, str] = {}   # 'buy'/'sell' → active order_id
         self._last_tick_time: Optional[float] = None
 
     # ------------------------------------------------------------------
@@ -97,13 +98,17 @@ class SimulatedExecutionEngine(ExecutionEngine):
     # ------------------------------------------------------------------
 
     async def submit_order(self, req: OrderRequest) -> str:
+        # Enforce at most one pending order per side — prevents inventory explosion
+        # from async timing creating duplicate orders that all fill simultaneously.
+        existing_id = self._side_to_order.get(req.side)
+        if existing_id and existing_id in self._orders:
+            self._orders.pop(existing_id)
+            logger.debug("SIM auto-cancel %s (replaced by new %s)", existing_id[:8], req.side)
+
         order_id = str(uuid.uuid4())
-        if req.order_type == "market":
-            # Market orders fill synchronously at next available price.
-            # Price will be resolved on next tick(); store with None price sentinel.
-            self._orders[order_id] = _PendingOrder(req=req, submitted_at=time.time())
-        else:
-            self._orders[order_id] = _PendingOrder(req=req, submitted_at=time.time())
+        self._orders[order_id] = _PendingOrder(req=req, submitted_at=time.time())
+        if req.order_type == "limit":
+            self._side_to_order[req.side] = order_id
         logger.debug("SIM submit %s %s %s qty=%d @ %s",
                      order_id[:8], req.side, req.order_type, req.qty, req.price)
         return order_id
@@ -111,6 +116,10 @@ class SimulatedExecutionEngine(ExecutionEngine):
     async def cancel_order(self, order_id: str) -> bool:
         existed = self._orders.pop(order_id, None) is not None
         if existed:
+            for side, oid in list(self._side_to_order.items()):
+                if oid == order_id:
+                    self._side_to_order.pop(side, None)
+                    break
             logger.debug("SIM cancel %s", order_id[:8])
         return existed
 

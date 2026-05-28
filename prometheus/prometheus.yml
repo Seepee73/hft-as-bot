@@ -5,5 +5,5 @@ global:
 scrape_configs:
   - job_name: "hft_as_bot"
     static_configs:
-      - targets: ["host.docker.internal:8000"]
+      - targets: ["host.docker.internal:8001"]
     metrics_path: /metrics

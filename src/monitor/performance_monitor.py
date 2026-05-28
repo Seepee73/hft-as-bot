@@ -126,5 +126,15 @@ class PerformanceMonitor:
 
     def start_server(self) -> None:
         """Start the Prometheus HTTP scrape endpoint."""
-        start_http_server(self._port, registry=self._registry)
-        logger.info("Prometheus metrics server started on port %d", self._port)
+        if self._port == 0:
+            return
+        try:
+            start_http_server(self._port, registry=self._registry)
+            logger.info("Prometheus metrics server started on port %d", self._port)
+        except OSError as exc:
+            logger.warning(
+                "Could not start Prometheus server on port %d (%s) — "
+                "metrics will not be exported. Change prometheus_port in config.yaml "
+                "or free the port with: lsof -ti:%d | xargs kill",
+                self._port, exc, self._port,
+            )

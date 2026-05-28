@@ -10,8 +10,8 @@ except ImportError:
 
 from src.book.order_book_manager import OrderBookManager
 from src.config import Config, load_config
-from src.execution.execution_engine import ExecutionEngine, FillEvent
-from src.feed.feed_handler import FeedHandler, OrderBookEvent
+from src.execution.execution_engine import ExecutionEngine, SimulatedExecutionEngine, FillEvent
+from src.feed.feed_handler import FeedHandler, KrakenFeedHandler, OrderBookEvent
 from src.monitor.performance_monitor import PerformanceMonitor
 from src.oms.order_management import OMS
 from src.params.parameter_estimator import ParameterEstimator
@@ -43,6 +43,11 @@ class HFTBot:
         # Allow injection of a custom engine (e.g. SimulatedExecutionEngine for tests)
         if execution_engine is not None:
             self.exec = execution_engine
+        elif getattr(config, "paper_trading", True):
+            # k=6.0 calibrated for dollar-denominated delta on BTC (~$75k).
+            # Gives ~1 fill per few minutes at typical AS spreads ($5-$15).
+            self.exec = SimulatedExecutionEngine(config, on_fill=self._on_fill, A=1.0, k=6.0)
+            logger.info("Paper trading mode — simulated fills against live market data")
         else:
             self.exec = ExecutionEngine(config, on_fill=self._on_fill)
 
@@ -61,7 +66,8 @@ class HFTBot:
             gamma=config.gamma,
             T_session_hours=config.session_hours,
         )
-        self.feed = FeedHandler(
+        handler_cls = KrakenFeedHandler if config.exchange.lower() == "kraken" else FeedHandler
+        self.feed = handler_cls(
             symbol=config.symbol,
             ws_url=config.exchange_ws_url,
             on_event=self.on_book_event,
@@ -119,6 +125,8 @@ class HFTBot:
             self.risk.q_max = self._orig_q_max
 
         # 6. Compute AS optimal quotes
+        max_half = (self.cfg.max_spread_ticks * self.cfg.tick_size / 2.0
+                    if self.cfg.max_spread_ticks > 0 else 0.0)
         bid, ask = self.engine.compute_quotes(
             S=state.mid,
             q=self.risk.q,
@@ -126,6 +134,7 @@ class HFTBot:
             kappa=kappa,
             t_elapsed=t_elapsed,
             tick_size=self.cfg.tick_size,
+            max_half_spread=max_half,
         )
 
         # 7. Send to OMS (OMS calls risk.check_order before submitting)
